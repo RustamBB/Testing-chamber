@@ -6,8 +6,8 @@ import matplotlib.animation as animation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import csv
 import time
-from tkinter import PhotoImage  # Import PhotoImage
-
+from tkinter import PhotoImage
+import threading
 
 class ArduinoGUI:
     def __init__(self, master):
@@ -68,6 +68,8 @@ class ArduinoGUI:
 
         self.ser = None
         self.csv_writer = None
+        self.serial_thread = None
+        self.plot_data_lock = threading.Lock()  # Lock for thread-safe access to plot data
 
         # Add scale widgets
         self.scale_frame = ctk.CTkFrame(master)
@@ -126,34 +128,59 @@ class ArduinoGUI:
 
     def connect_arduino(self):
         port = self.port_var.get()
-        self.ser = serial.Serial(port, 9600, timeout=1)
-        self.update_gui()
+        try:
+            self.ser = serial.Serial(port, 9600, timeout=1)
+            self.start_serial_thread()
+        except serial.SerialException as e:
+            print(f"Error connecting to port {port}: {e}")
 
     def disconnect_arduino(self):
         if self.ser:
             self.ser.close()
             self.ser = None
+            if self.serial_thread:
+                self.serial_thread.join()  # Wait for the thread to finish
 
-    def update_gui(self):
-        if self.ser:
-            line = self.ser.readline().decode('utf-8').strip()
-            if line:
-                humidity, temperature, angle, intensity = self.parse_data(line)
-                data_values = [humidity, temperature, angle, intensity]
+    def start_serial_thread(self):
+        self.serial_thread = threading.Thread(target=self.serial_loop)
+        self.serial_thread.daemon = True
+        self.serial_thread.start()
 
-                for i, value in enumerate(data_values):
-                    self.data_labels[i].configure(text=value)
-                    self.x_data[i].append(time.time())  # Use time.time() to record timestamps
-                    self.y_data[i].append(float(value))
-                    self.lines[i].set_data(self.x_data[i], self.y_data[i])
-                    row = i // 2
-                    col = i % 2
-                    self.axs[row, col].relim()
-                    self.axs[row, col].autoscale_view()
-                    self.axs[row, col].set_xlim(max(self.x_data[i][0], time.time() - 100),
-                                                time.time())  # Set x-axis limits
-                self.canvas.draw()
-        self.master.after(100, self.update_gui)
+    def serial_loop(self):
+        while True:
+            if self.ser:
+                if self.ser.inWaiting() > 0:
+                    line = self.ser.readline().decode('utf-8').strip()
+                    if line:
+                        humidity, temperature, angle, intensity = self.parse_data(line)
+                        data_values = [humidity, temperature, angle, intensity]
+
+                        with self.plot_data_lock:  # Acquire the lock before updating plot data
+                            for i, value in enumerate(data_values):
+                                self.data_labels[i].configure(text=value)
+                                self.x_data[i].append(time.time())
+                                self.y_data[i].append(float(value))
+
+                                # Limit the number of data points
+                                max_data_points = 100
+                                if len(self.x_data[i]) > max_data_points:
+                                    self.x_data[i] = self.x_data[i][-max_data_points:]
+                                    self.y_data[i] = self.y_data[i][-max_data_points:]
+
+                        self.master.after(0, self.update_plot)  # Schedule plot update on main thread
+
+            time.sleep(0.1)
+
+    def update_plot(self):
+        with self.plot_data_lock:  # Acquire the lock before accessing plot data
+            for i in range(4):
+                self.lines[i].set_data(self.x_data[i], self.y_data[i])
+                row = i // 2
+                col = i % 2
+                self.axs[row, col].relim()
+                self.axs[row, col].autoscale_view()
+                self.axs[row, col].set_xlim(max(self.x_data[i][0], time.time() - 100), time.time())
+        self.canvas.draw()
 
     def parse_data(self, data):
         # Extract the values after the letters H, T, B, and L
@@ -168,9 +195,10 @@ class ArduinoGUI:
 
     def send_scale_values(self):
         if self.ser:
-            value1 = self.scale1.get() if self.scale1.get() else 0
-            value2 = self.scale2.get() if self.scale2.get() else 0
-            self.ser.write(f"{value1},{value2}".encode())  # Send the values separated by a comma
+            value1 = int(self.scale1.get())
+            value2 = int(self.scale2.get())
+            data_to_send = f"{value1},{value2}\n"
+            self.ser.write(data_to_send.encode())
 
     def save_data_to_csv(self):
         if self.ser:
