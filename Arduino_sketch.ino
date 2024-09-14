@@ -21,12 +21,9 @@ const int DHTPIN = 4;
 dimmerLamp dimmer1(outputPin1);
 dimmerLamp dimmer2(outputPin2);
 
-
-
 // Create instances for sensors
 DHT dht(DHTPIN, DHT22);
 BH1750FVI LightSensor(BH1750FVI::k_DevModeContLowRes);
-
 
 void setup() {
   Serial.begin(9600);
@@ -44,22 +41,26 @@ void setup() {
   // Initialize BH1750FVI sensor
   LightSensor.begin();
   LightSensor.SetMode(132);
-// dimmer
-USE_SERIAL.begin(9600);
-dimmer1.begin(NORMAL_MODE, ON);
-dimmer2.begin(NORMAL_MODE, ON);
-  
+
+  // dimmer
+  USE_SERIAL.begin(9600);
+  dimmer1.begin(NORMAL_MODE, ON);
+  dimmer2.begin(NORMAL_MODE, ON);
 }
 
 void loop() {
-  // dimmer code
-  if (USE_SERIAL.available()){
-    int dimmer1Value = USE_SERIAL.parseInt();
-    int dimmer2Value = USE_SERIAL.parseInt();
-    dimmer1.setPower(dimmer1Value);
-    dimmer2.setPower(dimmer2Value);
+  // Read dimmer values from Serial (if available)
+  if (Serial.available() > 0) {
+    String dimmerValues = Serial.readStringUntil('\n'); 
+    int commaIndex = dimmerValues.indexOf(',');
+    if (commaIndex != -1) {
+      int dimmer1Value = dimmerValues.substring(0, commaIndex).toInt();
+      int dimmer2Value = dimmerValues.substring(commaIndex + 1).toInt();
+      dimmer1.setPower(dimmer1Value);
+      dimmer2.setPower(dimmer2Value);
+    }
   }
-  
+
   // Read sensor data
   float humidity = dht.readHumidity();
   float temperature = dht.readTemperature();
@@ -93,5 +94,5 @@ void loop() {
   Serial.print("L");
   Serial.println(lux * 2.49);
 
-  delay(1000); // Delay for stability
+  delay(10); // Delay for stability
 }
