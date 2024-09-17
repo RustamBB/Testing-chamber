@@ -94,5 +94,5 @@ void loop() {
   Serial.print("L");
   Serial.println(lux * 2.49);
 
-  delay(10); // Delay for stability
+  delay(500); // Delay for stability
 }
